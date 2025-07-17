@@ -11,9 +11,14 @@ To have a thing that does the tedious clicking and downloading for you. Just sta
 ### Prerequisites: 
 You sit in an ICE train and are connected to WLAN-on-ICE.
 
-### How to use that
+### How to use Python
 
 1. `uv sync`
 2. `uv run main.py`
+
+### How to use Golang
+1. `go get github.com/chromedp/chromedp`
+2. `go build .`
+3. `./iceportaldownloader`
 
 The magazines will be downloaded into the `downloaded_magazines` folder with appended date.
