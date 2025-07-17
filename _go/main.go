@@ -67,17 +67,24 @@ func main() {
 		go func(magazineURL string) {
 			defer wg.Done()
 
-			semaphore <- struct{}{}        // acquire semaphore
-			defer func() { <-semaphore }() // release semaphore
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
 
-			// Create a new chromedp context per goroutine
-			ctx, cancel := chromedp.NewContext(context.Background())
+			log.Println("[START]", magazineURL)
+
+			parentCtx := context.Background()
+			ctx, cancel := chromedp.NewContext(parentCtx)
+			ctx, timeoutCancel := context.WithTimeout(ctx, 20*time.Second)
 			defer cancel()
+			defer timeoutCancel()
 
 			if err := downloadMagazine(ctx, magazineURL, downloadFolder); err != nil {
 				log.Println("Error downloading magazine:", magazineURL, err)
 			}
+
+			log.Println("[DONE]", magazineURL)
 		}(url)
+
 	}
 
 	wg.Wait()
