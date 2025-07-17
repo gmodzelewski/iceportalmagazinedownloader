@@ -1,17 +1,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
+	"sync"
 	"time"
 
-	"context"
 	"github.com/chromedp/chromedp"
 )
 
@@ -47,7 +47,7 @@ func main() {
 	downloadFolder := "downloaded_magazines"
 	os.MkdirAll(downloadFolder, os.ModePerm)
 
-	// Clean folder
+	// Clean download folder
 	files, err := os.ReadDir(downloadFolder)
 	if err != nil {
 		log.Fatal(err)
@@ -56,22 +56,37 @@ func main() {
 		os.Remove(filepath.Join(downloadFolder, file.Name()))
 	}
 
-	// Setup chromedp
-	ctx, cancel := chromedp.NewContext(context.Background())
-	defer cancel()
+	// Limit concurrency (e.g., 5 concurrent Chrome instances)
+	const maxConcurrentDownloads = 5
+	semaphore := make(chan struct{}, maxConcurrentDownloads)
+
+	var wg sync.WaitGroup
 
 	for _, url := range magazineURLs {
-		if err := downloadMagazine(ctx, url, downloadFolder); err != nil {
-			log.Println("Error downloading magazine:", url, err)
-		}
+		wg.Add(1)
+		go func(magazineURL string) {
+			defer wg.Done()
+
+			semaphore <- struct{}{}        // acquire semaphore
+			defer func() { <-semaphore }() // release semaphore
+
+			// Create a new chromedp context per goroutine
+			ctx, cancel := chromedp.NewContext(context.Background())
+			defer cancel()
+
+			if err := downloadMagazine(ctx, magazineURL, downloadFolder); err != nil {
+				log.Println("Error downloading magazine:", magazineURL, err)
+			}
+		}(url)
 	}
+
+	wg.Wait()
 }
 
 func downloadMagazine(ctx context.Context, url, downloadFolder string) error {
 	log.Println("Navigating to:", url)
 
 	var downloadURL string
-
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
 		chromedp.WaitVisible(`//span[contains(@class, "link-text") and (text()="Jetzt lesen" or text()="Read now")]`, chromedp.BySearch),
@@ -85,7 +100,7 @@ func downloadMagazine(ctx context.Context, url, downloadFolder string) error {
 		return fmt.Errorf("download URL not found")
 	}
 
-	// Add base URL if missing
+	// Ensure URL is absolute
 	if !strings.HasPrefix(downloadURL, "http://") && !strings.HasPrefix(downloadURL, "https://") {
 		downloadURL = "https://iceportal.de/" + strings.TrimLeft(downloadURL, "/")
 	}
@@ -96,12 +111,11 @@ func downloadMagazine(ctx context.Context, url, downloadFolder string) error {
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
 		return fmt.Errorf("bad response: %s", resp.Status)
 	}
-	defer resp.Body.Close()
 
 	currentDate := time.Now().Format("2006-01-02")
 	filename := filepath.Join(downloadFolder, fmt.Sprintf("%s_%s.pdf", sanitizeFilename(url), currentDate))
@@ -123,8 +137,5 @@ func downloadMagazine(ctx context.Context, url, downloadFolder string) error {
 
 func sanitizeFilename(url string) string {
 	parts := strings.Split(strings.Trim(url, "/"), "/")
-	name := parts[len(parts)-1]
-	// Replace unwanted characters
-	reg := regexp.MustCompile(`[\\/:*?"<>|]`)
-	return reg.ReplaceAllString(name, "_")
+	return strings.ReplaceAll(parts[len(parts)-1], "/", "_")
 }
